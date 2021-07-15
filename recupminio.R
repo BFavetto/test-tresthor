@@ -13,7 +13,6 @@ object_exists("tresthor_1.0.0.tar.gz","benjaminfavetto", region= "")
 
 # Récupère l'objet et le sauvegarde
 # get_object("tresthor_dev-main.tar.gz","benjaminfavetto", region= "")
-setwd("~/")
 save_object("tresthor_1.0.0.tar.gz","benjaminfavetto", region= "")
 
 # sauvegarde l'objet

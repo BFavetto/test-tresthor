@@ -9,13 +9,13 @@ output: html_notebook
 # Installation des packages nécessaires à Tresthor
 
 install.packages(c("Deriv","tidyverse","scales","splitstackshape","assertthat","Matrix","cointReg","Rcpp",
-"RcppArmadillo","gsubfn"))
+"RcppArmadillo","gsubfn","x12","lubridate"))
 ```
 
 
-```{r}
+```{r echo=FALSE, include=FALSE}
 # Installation de Tresthor
 
-install.packages("tresthor_1.0.0.gz")
+install.packages("tresthor_1.0.0.tar.gz", repos = NULL, type = "source")
 ```
 
