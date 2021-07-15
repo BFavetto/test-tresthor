@@ -490,5 +490,135 @@ df_q$tendance <- 1:nrow(df_q)
 
 ### Chargement du modèle et estimation des équations comportementales
 
+```{r}
+# Lecture du modele ---------------------------------------------------------
+create_model("exemple_mod",model_source=system.file("UK_example","UK_model.txt",package="tresthor"))
+```
  
+Estimation des ECM du modèle
+
+```{r}
+
+# Informations sur les equations a estimer ----------------------------------
+
+# A remplir par l'utilisateur : 
+info_equations <- list(
+  eq_conso_privee=
+    list(endogenous_name="conso_privee",
+         residual_name="af_eq_conso_privee",
+         coeff_lt=c("e_lt1","e_lt2"),           
+         estim_start=as.Date("2000-01-01"),
+         estim_end=as.Date("2016-10-01"),
+         const=TRUE),
+  eq_fbcf_menages=
+    list(endogenous_name="fbcf_menages",
+         residual_name="af_eq_fbcf_menages",     
+         coeff_lt=c("i_lt1","i_lt2","i_lt3"),   
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_fbcf_entreprises=
+    list(endogenous_name="fbcf_entreprises",   
+         residual_name="af_eq_fbcf_entreprises",   
+         coeff_lt=NULL,                         
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_importations=
+    list(endogenous_name="importations",       
+         residual_name="af_eq_importations",       
+         coeff_lt=c("g_lt1","g_lt2","g_lt3"),   
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_exportations=
+    list(endogenous_name="exportations",       
+         residual_name="af_eq_exportations",       
+         coeff_lt=NULL,                         
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_ipc_alim=
+    list(endogenous_name="ipc_alim",           
+         residual_name="af_eq_ipc_alim",           
+         coeff_lt=c("a_lt1","a_lt2","a_lt3"),   
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_ipc_nrj=
+    list(endogenous_name="ipc_nrj",            
+         residual_name="af_eq_ipc_nrj",            
+         coeff_lt=c("b_lt1","b_lt2"),           
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_ipc_core =
+    list(endogenous_name="ipc_core",           
+         residual_name="af_eq_ipc_core",           
+         coeff_lt=c("c_lt1","c_lt2","c_lt3"),   
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_smpt_d1=
+    list(endogenous_name="smpt_d1",            
+         residual_name="af_eq_smpt_d1",            
+         coeff_lt=NULL,                         
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_emploi=
+    list(endogenous_name="emploi",             
+         residual_name="af_eq_emploi",             
+         coeff_lt=NULL,                         
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=TRUE),
+  eq_rdb=
+    list(endogenous_name="rdb",                
+         residual_name="af_eq_rdb",                
+         coeff_lt=NULL,                         
+         estim_start=as.Date("2000-01-01"),     
+         estim_end=as.Date("2016-10-01"),      
+         const=FALSE)
+)
+
+
+# Initialisation des cales dans la bdd --------------------------------------
+for(i in info_equations){
+  df_q[,i[["residual_name"]]] <- 0
+}
+
+# Estimation des equations (coefficients dans la bdd) et creation -----------
+# des objets thoR.equation --------------------------------------------------
+
+df_q <- quick_estim_all(info_equations,exemple_mod,df_q,"date")
+```
+
+
+### Calage du modèle
+
+```{r}
+
+# Calcul des residus sur le passe -------------------------------------------
+
+df_q <- lapply(names(info_equations),function(x) {
+  y <- simulate_equation(
+    thor_equation=get(x),
+    database=df_q,
+    start_sim=as.Date("2000-01-01"),
+    end_sim=as.Date(date_fin_obs),
+    index_time="date",
+    residual_var=info_equations[[x]]$residual_name) %>%
+    as.data.frame() %>%
+    .[,c("date","residual")]
+  colnames(y) <- c("date",info_equations[[x]]$residual_name)
+  return(y)}
+) %>%
+  Reduce(function(...) merge(..., all=TRUE),.,
+         df_q[,which(!colnames(df_q)%in%lapply(info_equations, 
+                                               function(x) x$residual_name))])
+
+# Contribution des cales (nulles en prevision dans le scenario baseline) ----
+df_q[,paste0("afusr_",names(info_equations))] <- 0
+```
 
