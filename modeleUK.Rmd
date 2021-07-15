@@ -398,6 +398,97 @@ df_q$ipc_tot_vt <- vt(df_q$ipc_tot)
 # view(df_q)
 ```
 
-Prévision des variables exogènes
+### Prévision des variables exogènes
 
+Pour mener à bien l'exemple de prévision pour les années 2019 et 2020, on fait comme si la base de donnée s’arrêtait au dernier trimestre de 2018. On commence par prolonger le data.frame jusqu’au dernier trimestre 2020.
+
+
+```{r}
+### Exemple de prevision pour 2019 et 2020 ----------------------------------
+
+### Supprimer donnees apres 2018 (pour faire un exemple de prevision) -------
+df_q <- df_q[which(df_q$date<=as.Date("2018-10-01")),]
+
+### Prolongation des series exogenes ----------------------------------------
+date_fin_obs    <- "2018-10-01"
+date_debut_prev <- "2019-01-01"
+date_fin_prev   <- "2020-10-01"
+horizon_prev <- seq.Date(from=as.Date(date_debut_prev),
+                         to=as.Date(date_fin_prev),
+                         by="quarter") %>% 
+  as.character(.)
+
+### ### Extension du data.frame jusqu'à fin 2020 -----------------------------
+
+
+while(last(df_q$date)<as.Date(date_fin_prev)){
+  temp <- df_q[nrow(df_q),]
+  temp <- lapply(temp,function(x)x<-NA) %>% as.data.frame(.)
+  temp$date <- ceiling_date(as.Date(last(df_q$date)), "quarter")
+  rownames(temp) <- temp$date
+  df_q <- rbind(df_q,temp)
+}
+rm(temp)
+```
+
+
+Prolongation des exogènes
+
+```{r}
+### ### gel -----------------------------------------------------------------
+series <- c("tcen","tcer","w_ipc_tot","w_ipc_core","w_ipc_nrj","w_ipc_alim",
+            "ajust_pension","brentl","usd_gbr","h_trav_pemp")
+
+df_q[horizon_prev,series] <- df_q[date_fin_obs,series]
+
+### ### contribution variation des stocks et erreurs nulle ------------------
+
+df_q[horizon_prev,"contrib_vstockserr"] <- 0
+
+### ### croissance moyenne --------------------------------------------------
+series <- c("dm","conso_publique_val","fbcf_publique_val",
+            "defl_conso_publique","defl_fbcf_publique","px_immo",
+            "popact","defl_importations","defl_exportations") 
+
+horizon_prev_index <- which(rownames(df_q)%in%horizon_prev)
+n0=horizon_prev_index[1]-8
+n1=horizon_prev_index[1]-1
+
+for (s in series){
+  x0 <- df_q[n0,s]
+  x1 <- df_q[n1,s]
+  var <- (x1/x0)^(1/(n1-n0))-1
+  for(h in horizon_prev_index){
+    df_q[h,s] <- df_q[h-1,s]*(1+var)
+  }
+} 
+
+rm(series,n1,n0)
+
+### ### Autres series -------------------------------------------------------
+
+# Indicatrices 
+
+df_q$dummy06q1 <- 0
+df_q$dummy06q1[which(df_q$date==as.Date("2006-01-01"))] <- 1
+
+df_q$dummy06q2 <- 0
+df_q$dummy06q2[which(df_q$date==as.Date("2006-04-01"))] <- 1
+
+df_q$dummy06q3 <- 0
+df_q$dummy06q3[which(df_q$date==as.Date("2006-07-01"))] <- 1
+
+df_q$dummy09q2<-0
+df_q$dummy09q2[which(df_q$date==as.Date("2009-04-01"))]<-1
+
+# Tendance
+
+df_q$tendance <- 1:nrow(df_q)
+
+```
+
+
+### Chargement du modèle et estimation des équations comportementales
+
+ 
 
