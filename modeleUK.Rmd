@@ -10,6 +10,8 @@ output: html_notebook
 
 install.packages(c("Deriv","tidyverse","scales","splitstackshape","assertthat","Matrix","cointReg","Rcpp",
 "RcppArmadillo","gsubfn","x12","lubridate"))
+
+install.packages("rdbnomics")
 ```
 
 
@@ -18,4 +20,384 @@ install.packages(c("Deriv","tidyverse","scales","splitstackshape","assertthat","
 
 install.packages("tresthor_1.0.0.tar.gz", repos = NULL, type = "source")
 ```
+
+```{r}
+# Librairies ----------------------------------------------------------------
+
+library(tidyverse)
+library(rdbnomics)
+library(tresthor)
+library(x12)
+library(lubridate)
+```
+
+
+```{r}
+# Noms et codes des series a charger ----------------------------------------
+
+series_dbnomics <- readRDS(system.file("UK_example","series_dbnomics.RDS",package="tresthor"))
+
+# view(series_dbnomics)
+
+```
+
+
+```{r}
+# Liste de data.frame par frequence, a partir de 1980 ------------------------
+
+df <- rdb(ids=series_dbnomics$series_code) %>%
+  as.data.frame() %>%
+  filter(period>=as.Date("1980-01-01")) %>%
+  unite(col="name",provider_code,dataset_code,series_code,sep="/") %>%
+  split(.[,"@frequency"]) %>%
+  lapply(function(x){reshape(x[,c("name","period","value")],
+                             direction="wide",
+                             timevar="name",idvar="period")}) %>%
+  lapply(function(x){
+    colnames(x) <- series_dbnomics[gsub("value.","",colnames(x)),"name"]
+    colnames(x)[1] <- "date"
+    return(x)}) 
+
+rm(series_dbnomics)  # supprime le dataframe des noms de variables
+
+# view(df$quarterly)
+```
+
+Retraitement des données pour avoir une base trimestrielle
+
+```{r echo=FALSE, include=FALSE}
+################################################################################
+######################## retraitements des donnees  ############################
+################################################################################
+
+# Fonctions --------------------------------------------------------------------
+
+# Variation trimestrielle
+vt <- function(x){
+  return(x/lag(x,n=1)-1)
+}
+
+# Premiere obs non NA
+firstNonNA <- function(x){
+  i <- 1
+  y <- x[i]
+  while(is.na(x[i])){
+    i <- i+1
+  }
+  return(i)
+}
+
+# Niveau a partir de vt
+getLevel <- function(x) {
+  # Fonction qui prend en input un taux de croissance et retourne un niveau (indice)
+  # Attention pas de trous dans les donnees, juste des NA au debut et a la fin de la serie, sinon ca ne fonctionne pas.
+  nobs <- length(na.omit(x))
+  x[1] <- NA
+  i <- firstNonNA(x)
+  y <- c(1,1+na.omit(x))
+  res <- x
+  res[(i-1):(i+nobs-1)]<-cumprod(y)
+  return(res)
+}
+
+# Fonction qui repete chaque observation de v times fois
+freqconv_repeat <- function(v,times){
+  n=length(v)
+  y <- rep(NA,n*times)
+  for(i in 1:n){
+    for(j in ((i-1)*times+1):(i*times)){
+      y[j]<-v[i]
+    }
+  }
+  return(y)
+}
+
+# Fonction qui approxime une somme de volumes chaines
+AgregVolch <- function(val, volch, annref = 2014){
+  
+  if (any(!(names(val) %in% names(volch))) | any(!(names(volch) %in% names(val)))) stop("Les noms de variables ne correspondent pas")
+  
+  val$agreg <- rowSums(val)
+  
+  for (i in c("val", "volch")){
+    
+    t <- eval(parse(text = i))
+    
+    t$annee <- as.numeric(substr(rownames(t), 1, 4))
+    
+    t.ann <- aggregate(subset(t, select = -c(annee)), by = list(t$annee), FUN = sum)
+    rownames(t.ann) <- t.ann$Group.1
+    assign(paste0(i, "_ann"), subset(t.ann, select = -c(Group.1)))
+  }
+  
+  prixch_ann <- subset(val_ann, select = -c(agreg)) / volch_ann
+  
+  volpap <- volch
+  for (i in 1:dim(volpap)[1]){
+    volpap[i, ] <- volch[i, ] * prixch_ann[as.character(as.numeric(substr(rownames(subset(volpap, rownames(volpap) == rownames(volpap)[i])), 1, 4)) - 1), ]
+  }
+  volpap$agreg <- rowSums(volpap)
+  volpap$annee <- as.numeric(substr(rownames(volpap), 1, 4))
+  
+  volpap_ann <- aggregate(subset(volpap, select = -c(annee)), by = list(volpap$annee), FUN = sum)
+  rownames(volpap_ann) <- volpap_ann$Group.1
+  volpap_ann <- subset(volpap_ann, select = -c(Group.1))
+  
+  volch_ann <- val_ann
+  for (i in (annref + 1):max(as.numeric(rownames(volch_ann)))){
+    volch_ann[as.character(i), ] <- volch_ann[as.character(i - 1), ] * volpap_ann[as.character(i), ] / val_ann[as.character(i - 1), ]
+  }
+  for (i in (annref - 1):(min(as.numeric(rownames(volch_ann))))){
+    volch_ann[as.character(i), ] <- volch_ann[as.character(i + 1), ] / volpap_ann[as.character(i + 1), ] * val_ann[as.character(i), ]
+  }
+  
+  prixch_ann$agreg <- val_ann$agreg / volch_ann$agreg
+  
+  for (i in 1:dim(volch)[1]){
+    volch[i, "agreg"] <- volpap[i, "agreg"] / prixch_ann[as.character(as.numeric(substr(rownames(subset(volpap, rownames(volpap) == rownames(volpap)[i])), 1, 4)) - 1), "agreg"]
+  }
+  return(subset(volch, select = c(agreg)))
+  
+}
+
+# Trimestrialisation -----------------------------------------------------------
+
+# 1 seul data.frame trimestriel (repeter l'annuel)
+df_q <- lapply(df[["annual"]][,-1],freqconv_repeat,times=4) %>%
+  as.data.frame(.) %>%
+  mutate(.,date=seq.Date(from=as.Date("1980-01-01"),by="quarter",length.out=nrow(.))) %>%
+  merge(.,df[["quarterly"]],all=TRUE) 
+rm(df)
+
+# Nom des lignes
+rownames(df_q) <- df_q$date
+
+# Corriger de la saisonnalite --------------------------------------------------
+
+# ipc_core
+name_x <- "ipc_core"
+name_y <- "ipc_core"
+x <- ts(df_q[,name_x],start=year(df_q$date[1]),frequency=4)
+y <- x12(x)@d11
+y[is.na(x)] <- NA
+df_q[,name_y] <- as.vector(y)
+
+# ipc_nrj
+name_x <- "ipc_nrj"
+name_y <- "ipc_nrj"
+x <- ts(df_q[,name_x],start=year(df_q$date[1]),frequency=4)
+y <- x12(x)@d11
+y[is.na(x)] <- NA
+df_q[,name_y] <- as.vector(y) 
+
+# ipc_tot
+name_x <- "ipc_tot"
+name_y <- "ipc_tot"
+x <- ts(df_q[,name_x],start=year(df_q$date[1]),frequency=4)
+y <- x12(x)@d11
+y[is.na(x)] <- NA
+df_q[,name_y] <- as.vector(y)
+
+# Suppression des fichiers x12
+fichiers_x12_a_supprimer <- list.files(pattern = ("^Rout.*"))
+if (length(fichiers_x12_a_supprimer) > 0) {
+  fichiers_x12_a_supprimer %>% purrr::map(~file.remove(.x))
+}
+dossier_x12_a_supprimer <- list.files(pattern = ("^gra_Rout$"))
+unlink(dossier_x12_a_supprimer, recursive = TRUE)
+rm(name_x,name_y,x,y,dossier_x12_a_supprimer,fichiers_x12_a_supprimer)
+
+### Modif 2005T2 ---------------------------------------------------------------
+
+# On observe sur le passe un flux negatif de fbcf publique en 2005Q2, compense par un 
+# flux positif de fbcf entreprises.
+# On modifie cela pour ne pas perturber l'estimation (log de negatif impossible).
+
+# Interpolation lineaire 2005Q2 pour la fbcf_entreprises.
+temp1 <- df_q["2005-04-01","fbcf_entreprises"]
+temp2 <- df_q["2005-01-01","fbcf_entreprises"]
+temp3 <- df_q["2005-07-01","fbcf_entreprises"]
+temp4 <- (temp2+temp3)/2 - temp1 # interpolation moins observe (negatif)
+# On retire la difference de la fbcf_eq et on l'ajoute a la fbcf_apu.
+temp5 <- df_q["2005-04-01","fbcf_publique"]
+df_q["2005-04-01","fbcf_entreprises"] <- temp1 + temp4
+df_q["2005-04-01","fbcf_publique"] <- temp5 - temp4
+
+# Idem valeur
+# Interpolation lineaire 2005Q2 pour la fbcf_entreprises.
+temp1 <- df_q["2005-04-01","fbcf_entreprises_val"]
+temp2 <- df_q["2005-01-01","fbcf_entreprises_val"]
+temp3 <- df_q["2005-07-01","fbcf_entreprises_val"]
+temp4 <- (temp2+temp3)/2 - temp1 # interpolation moins observe (negatif)
+# On retire la difference de la fbcf_eq et on l'ajoute a la fbcf_apu.
+temp5 <- df_q["2005-04-01","fbcf_publique_val"]
+df_q["2005-04-01","fbcf_entreprises_val"] <- temp1 + temp4
+df_q["2005-04-01","fbcf_publique_val"] <- temp5 - temp4
+
+rm(temp1,temp2,temp3,temp4,temp5)
+
+### Operations sur volumes chaines ---------------------------------------------
+
+### ### Calcul fbcf menages ----------------------------------------------------
+
+# A modifier
+series <- c("fbcf_logements_menages",
+            "fbcf_transac_menages",
+            "fbcf_logements_entrpub",
+            "fbcf_transac_entrpub")
+
+resultat <- "fbcf_menages"
+
+# A ne pas modifier
+series_val <- paste0(series,"_val")
+resultat_val <- paste0(resultat,"_val")
+volch <- df_q[,series]
+val <- df_q[,series_val]
+colnames(val) <- series
+
+df_q[,resultat]<- AgregVolch(volch=volch,val=val,annref=2018)$agreg
+df_q[,resultat_val] <- rowSums(val)
+rm(volch,val,series,series_val,resultat,resultat_val)
+
+### ### Calcul consommation privee ---------------------------------------------
+
+# A modifier
+series <- c("conso_menages",
+            "conso_isblsm")
+
+resultat <- "conso_privee"
+
+# A ne pas modifier
+series_val <- paste0(series,"_val")
+resultat_val <- paste0(resultat,"_val")
+volch <- df_q[,series]
+val <- df_q[,series_val]
+colnames(val) <- series
+
+df_q[,resultat]<- AgregVolch(volch=volch,val=val,annref=2018)$agreg
+df_q[,resultat_val] <- rowSums(val)
+rm(volch,val,series,series_val,resultat,resultat_val)
+
+### ### Calcul dihs ------------------------------------------------------------
+
+# A modifier
+series <- c("conso_privee",
+            "conso_publique",
+            "fbcf")
+
+resultat <- "dihs"
+
+# A ne pas modifier
+series_val <- paste0(series,"_val")
+resultat_val <- paste0(resultat,"_val")
+volch <- df_q[,series]
+val <- df_q[,series_val]
+colnames(val) <- series
+
+df_q[,resultat]<- AgregVolch(volch=volch,val=val,annref=2018)$agreg
+df_q[,resultat_val] <- rowSums(val)
+rm(volch,val,series,series_val,resultat,resultat_val)
+
+### Calcul des deflateurs ------------------------------------------------------
+series <- c(
+  "pib",
+  "conso_publique",
+  "conso_privee",
+  "fbcf",
+  "fbcf_publique",
+  "fbcf_menages",
+  "fbcf_entreprises",
+  "exportations",
+  "importations",
+  "conso_menages"
+)
+
+for (i in series){
+  df_q[,paste0("defl_",i)]<-df_q[,paste0(i,"_val")]/df_q[,i]*100
+}
+rm(series,i)
+
+### Calcul des contributions au PIB --------------------------------------------
+series <- c("conso_privee","conso_publique","fbcf","fbcf_publique",
+            "fbcf_menages","fbcf_entreprises","exportations","importations")
+for (s in series){
+  if (s=="importations"){m<--1}else{m<-1}
+  x <- df_q[,s]
+  xval <- df_q[,paste0(s,"_val")]
+  df_q[,paste0("contrib_",s)] <- vt(x)*.5*(xval/df_q$pib_val+lag(xval,n=1)/lag(df_q$pib_val,n=1))*m
+}
+df_q$contrib_solde_exterieur <- with(df_q,contrib_exportations+contrib_importations)
+df_q$contrib_dihs <- with(df_q,contrib_conso_privee+contrib_conso_publique+contrib_fbcf)
+df_q$contrib_di <- with(df_q,vt(pib)-contrib_solde_exterieur)
+df_q$contrib_vstockserr <- with(df_q,contrib_di-contrib_dihs)
+df_q$contrib_df <- with(df_q,contrib_di+contrib_exportations)
+rm(s,series,m)
+
+### Stocks en niveau -----------------------------------------------------------
+df_q$vstockserr_val <- with(df_q,pib_val-conso_privee_val-conso_publique_val-fbcf_val-exportations_val+importations_val)
+### Compte des menages ---------------------------------------------------------
+
+# Pouvoir d'achat
+df_q$pa <- with(df_q,rdb/defl_conso_privee*100)
+# df_q$pa_deflipc <- with(df_q,rdb/ipc_tot*100) #deflate par l'IPC
+
+# Epargne
+df_q$epargne <- with(df_q,rdb+ajust_pension-conso_menages_val)
+df_q$tx_epargne <- with(df_q,epargne/(rdb+ajust_pension))
+
+### Marche du travail ----------------------------------------------------------
+
+# Heures travaillees par emploi
+df_q$h_trav_pemp <- with(df_q,h_trav/emploi*10^(6-3))
+
+# Population active et taux d'activite
+df_q$popact <- with(df_q,emploi+chomage)
+
+# Taux de chomage
+df_q$tx_chomage<-with(df_q,chomage/popact)
+
+### Prix-couts -----------------------------------------------------------------
+
+# Contributions a l'inflation totale
+df_q$w_ipc_tot=1000
+df_q$w_ipc_alim <- with(df_q,w_ipc_tot-w_ipc_core-w_ipc_nrj)
+df_q$contrib_ipc_nrj  <- with(df_q,vt(ipc_nrj)*lag(w_ipc_nrj,n=1)/1000)
+df_q$contrib_ipc_core  <- with(df_q,vt(ipc_core)*lag(w_ipc_core,n=1)/1000)
+
+# Calcul IPC alim (solde des contributions)
+df_q$contrib_ipc_alim <- with(df_q,vt(ipc_tot) - (contrib_ipc_nrj + contrib_ipc_core))
+df_q$ipc_alim_vt <- with(df_q,contrib_ipc_alim/(w_ipc_alim/1000))
+df_q$ipc_alim <- with(df_q,getLevel(ipc_alim_vt))
+df_q$ipc_alim <- with(df_q,ipc_alim/mean(ipc_alim[which(year(df_q$date)==2015)])*100) # Base 2015=100
+
+# SMPT
+df_q$smpt_d1 <- with(df_q,salaires_d1/emploi_sal)
+
+# Productivite
+df_q$productivite <- with(df_q,pib/emploi)
+
+# CSU
+df_q$csu_d1 <- with(df_q,smpt_d1/productivite)
+
+# Taux de marge macro
+df_q$tx_marge_macro <- with(df_q,(pib_val-salaires_d1)/pib_val)
+
+# Taux d'investissement macro
+df_q$tx_investissement_macro <- with(df_q,fbcf_val/pib_val)
+
+# Brent en GBR
+df_q$brentl <- with(df_q,brent/usd_gbr)
+
+# Prix immo reels
+df_q$px_immo_rimmo <- with(df_q,px_immo/defl_fbcf_menages*100)
+
+### Variation trimestrielle du pib et de l'inflation ---------------------------
+df_q$pib_vt <- vt(df_q$pib) 
+df_q$ipc_tot_vt <- vt(df_q$ipc_tot)
+
+# view(df_q)
+```
+
+Prévision des variables exogènes
+
 
