@@ -16,6 +16,6 @@ install.packages(c("Deriv","tidyverse","scales","splitstackshape","assertthat","
 ```{r}
 # Installation de Tresthor
 
-install.packages("tresthor_dev-main.tar.gz")
+install.packages("tresthor_1.0.0.gz")
 ```
 
