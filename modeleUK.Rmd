@@ -687,3 +687,56 @@ df_tableau %>%
 
 ```
 
+```{r}
+# Calcul des contributions dynamiques ---------------------------------------
+
+my_contrib <- sapply(names(info_equations),function(x) {
+  dyn_contribs(get(x),
+               my_prev,
+               as.Date("2000-01-01"),
+               as.Date(date_fin_prev),
+               "date",
+               info_equations[[x]]$residual_name) %>%
+    filter(date>=as.Date("2000-01-01"))
+}) %>%
+  setNames(.,names(info_equations)) %>%
+  as.list()
+
+my_contrib_an <- lapply(my_contrib, function(x) {
+  yearly_contrib(x,
+                 index_year=substr(x[,"date"],start=1,stop=4))
+})
+
+# Graphiques ----------------------------------------------------------------
+
+graphiques_q<- lapply(names(info_equations),function(x) {
+  graph_contrib(
+    my_contrib[[x]],
+    as.Date("2017-01-01"),
+    as.Date("2020-10-01"),
+    "date",
+    paste0("Contributions trimestrielles : ",
+           info_equations[[x]]$endogenous_name)
+  )
+}) %>%
+  setNames(names(info_equations))
+
+graphiques_a <- lapply(names(info_equations),function(x) {
+  graph_contrib(
+    my_contrib_an[[x]],
+    "2010",
+    "2020",
+    "year",
+    paste0("Contributions annuelles : ",info_equations[[x]]$endogenous_name)
+    )
+})  %>%
+  setNames(.,names(info_equations))
+```
+
+
+```{r}
+
+graphiques_q
+
+```
+
