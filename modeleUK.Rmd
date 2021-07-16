@@ -622,3 +622,15 @@ df_q <- lapply(names(info_equations),function(x) {
 df_q[,paste0("afusr_",names(info_equations))] <- 0
 ```
 
+
+### Simulation du modèle en prévision
+
+```{r}
+# Resolution du modele en prevision -----------------------------------------
+
+my_prev <- thor_solver(model=exemple_mod,
+                       first_period=as.Date(date_debut_prev),
+                       last_period=as.Date(date_fin_prev),
+                       database=df_q)
+```
+
