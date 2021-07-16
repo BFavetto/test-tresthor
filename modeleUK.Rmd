@@ -12,6 +12,7 @@ install.packages(c("Deriv","tidyverse","scales","splitstackshape","assertthat","
 "RcppArmadillo","gsubfn","x12","lubridate"))
 
 install.packages("rdbnomics")
+install.packages("flextable")
 ```
 
 
@@ -29,6 +30,7 @@ library(rdbnomics)
 library(tresthor)
 library(x12)
 library(lubridate)
+library(flextable)
 ```
 
 
@@ -632,5 +634,56 @@ my_prev <- thor_solver(model=exemple_mod,
                        first_period=as.Date(date_debut_prev),
                        last_period=as.Date(date_fin_prev),
                        database=df_q)
+```
+
+### Présentation des résultats
+
+```{r}
+series <- c("pib",
+            "conso_publique","conso_privee",
+            "fbcf","fbcf_publique","fbcf_entreprises","fbcf_menages",
+            "importations","exportations",
+            "salaires_d1","pa","ipc_tot","ipc_core",
+            "productivite","csu_d1")
+
+labels <- c("PIB","Consommation publique","Consommation privée",
+            "FBCF","..... publique",".... entreprises", "..... ménages",
+            "Importations","Exportations",
+            "Salaires","Pouvoir d'achat","IPC","..... sous-jacent",
+            "Productivité","Coûts salariaux unitaires")
+
+# data.frame pour le tableau
+
+df_tableau <- my_prev[,-1] %>%
+  lapply(function(x)vt(x)*100) %>%
+  as.data.frame() %>%
+  .[(nrow(df_q)-4*4+1):nrow(df_q),series] %>%
+  t() %>%
+  as.data.frame() %>%
+  round(digits=1) %>%
+  format(decimal.mark = ",",
+         digits = 1)
+  
+rownames(df_tableau) <- labels
+df_tableau <- rownames_to_column(df_tableau)  
+
+# Dates
+
+header_annee <- c("",year(my_prev$date[(nrow(df_q)-4*4+1):nrow(df_q)])) %>% as.list()
+names(header_annee) <- colnames(df_tableau)  
+
+header_trimestre <- c("",paste0("T",(month(my_prev$date[(nrow(df_q)-4*4+1):nrow(df_q)])-1)/12*4+1)) %>% as.list()
+names(header_trimestre) <- colnames(df_tableau)  
+
+# Tableau flextable
+
+df_tableau %>%
+  flextable() %>%
+  set_header_labels(values=header_trimestre) %>%
+  add_header(values=header_annee) %>%
+  merge_h(part="header") %>%
+  theme_zebra() %>%
+  align(align="center",j=2:ncol(df_tableau),part="all")
+
 ```
 
